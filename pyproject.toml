@@ -5,8 +5,10 @@ description = "A Lambda function wrapper for Microsoft's [markitdown library](ht
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "boto3>=1.37.28",
     "fastapi[standard]>=0.115.12",
     "markitdown[all]>=0.1.1",
+    "nanoid>=2.0.0",
+    "pydantic>=2.11.2",
     "ruff>=0.11.4",
-    "watchdog[watchmedo]>=6.0.0",
 ]

@@ -1,7 +1,21 @@
-import sys
+from pathlib import Path
+import re
+from io import BytesIO
+import warnings
+import boto3
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 from markitdown import MarkItDown
+from s3 import fetch_from_s3
 
-valid_sources = [
+s3 = boto3.client("s3")
+app = FastAPI()
+md = MarkItDown()
+
+# Filter out deprecation warnings from botocore
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="botocore.*")
+
+VALID_EXTENSIONS = {
     "pdf",
     "ppt",
     "pptx",
@@ -24,25 +38,79 @@ valid_sources = [
     "zip",
     "youtube",
     "epub",
-]
+}
+S3_URI_PATTERN = r"s3://([^/]+)/(.+)"
+DEFAULT_CONTENT_TYPE = "text/markdown"
 
 
-def main(source: str = None):
-    if source and source.lower().split(".")[-1] not in valid_sources:
-        raise ValueError(f"Source must be one of: {valid_sources}")
+class MarkItDownRequest(BaseModel):
+    """Request model for file-to-markdown conversion."""
 
-    md = MarkItDown()
-    result = md.convert(source)
-    print(result.text_content)
-    with open("output.md", "w", encoding="utf-8") as f:
-        f.write(result.text_content)
+    source: str
+
+    def is_s3_uri(self) -> bool:
+        """Check if the source is an S3 URI."""
+        return bool(re.match(S3_URI_PATTERN, self.source))
 
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        source_arg = sys.argv[1]
-    else:
-        raise ValueError(
-            "Please provide a source file as a command line argument. Example: python main.py yourfile.pdf"
+class MarkItDownResponse(BaseModel):
+    """Response model for markdown-formatted content."""
+
+    title: str
+    text_content: str
+    content_type: str = Field(default=DEFAULT_CONTENT_TYPE)
+
+
+def extract_title(text_content: str, fallback_name: str) -> str:
+    """Extract title from markdown content or use fallback."""
+    if title_match := re.search(r"^#\s+(.+)$", text_content, re.MULTILINE):
+        return title_match.group(1)
+    return Path(fallback_name).stem
+
+
+def validate_source(source: str) -> None:
+    """Validate source file extension."""
+    if not source:
+        raise HTTPException(status_code=400, detail="Source must be provided")
+
+    extension = source.lower().split(".")[-1]
+    if extension not in VALID_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file extension. Must be one of: {', '.join(VALID_EXTENSIONS)}",
         )
-    main(source_arg)
+
+
+@app.post("/", response_model=MarkItDownResponse)
+async def convert_to_markdown(request: MarkItDownRequest) -> MarkItDownResponse:
+    """Convert various file types to markdown format."""
+    validate_source(request.source)
+
+    # Fetch content from S3 or local file
+    if request.is_s3_uri():
+        bucket, key = request.source[5:].split("/", 1)
+        source_content = fetch_from_s3(
+            bucket_name=bucket, object_key=key, max_retries=2
+        )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Only S3 URIs are currently supported.",
+        )
+
+    if not source_content:
+        raise HTTPException(status_code=400, detail="No content found to convert")
+
+    # Handle binary content
+    if isinstance(source_content, bytes):
+        source_content = BytesIO(source_content)
+
+    # Convert to markdown
+    result = md.convert(source_content)
+
+    # Extract or generate title
+    title = result.title or extract_title(
+        result.text_content, request.source.split("/")[-1]
+    )
+
+    return MarkItDownResponse(title=title, text_content=result.text_content)

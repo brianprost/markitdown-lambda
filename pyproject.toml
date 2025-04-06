@@ -1,0 +1,12 @@
+[project]
+name = "markitdown-lambda"
+version = "0.1.0"
+description = "A Lambda function wrapper for Microsoft's [markitdown library](https://github.com/microsoft/markitdown) to convert various file formats to Markdown Text."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi[standard]>=0.115.12",
+    "markitdown[all]>=0.1.1",
+    "ruff>=0.11.4",
+    "watchdog[watchmedo]>=6.0.0",
+]

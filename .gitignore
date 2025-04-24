@@ -15,3 +15,11 @@ output.md
 *.xls*
 *.csv
 *.pdf
+
+# Terraform-generated files
+*.tfstate
+*.tfstate.backup
+*.tfplan
+*.tfplan.backup
+*.terraform.lock*
+.terraform/

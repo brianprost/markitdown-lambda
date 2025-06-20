@@ -1,12 +1,28 @@
+import sys
+import os
 from pathlib import Path
 import re
 from io import BytesIO
 import warnings
 import boto3
+import onnxruntime as ort
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from markitdown import MarkItDown
 from s3 import fetch_from_s3
+from aws_lambda_powertools import Logger
+
+logger = Logger()
+
+# Suppress onnxruntime warnings and CPU detection errors in Lambda
+ort.set_default_logger_severity(4)  # 4 = ERROR level, suppress warnings
+os.environ.setdefault('ORT_LOGGING_LEVEL', '4')
+
+# Additional Lambda environment handling
+if 'AWS_LAMBDA_FUNCTION_NAME' in os.environ:
+    # Running in Lambda, suppress additional warnings
+    os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+    os.environ.setdefault('OMP_NUM_THREADS', '1')
 
 s3 = boto3.client("s3")
 app = FastAPI()
@@ -85,6 +101,8 @@ def validate_source(source: str) -> None:
 async def convert_to_markdown(request: MarkItDownRequest) -> MarkItDownResponse:
     """Convert various file types to markdown format."""
     validate_source(request.source)
+
+    logger.info(f"Using Python version {sys.version}")
 
     # Fetch content from S3 or local file
     if request.is_s3_uri():

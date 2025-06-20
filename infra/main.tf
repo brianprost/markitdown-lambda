@@ -15,8 +15,8 @@ module "lambda" {
   function_name = local.app_name
   image_uri     = "${module.ecr.repository_url}:${var.image_tag}"
 
-  memory_size = 1024
-  timeout     = 10
+  memory_size = 8192
+  timeout     = 60
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
@@ -33,6 +33,7 @@ module "ecr" {
   source = "terraform-aws-modules/ecr/aws"
 
   repository_name = local.app_name
+  repository_image_tag_mutability = "MUTABLE"
 
   repository_lifecycle_policy = jsonencode({
     rules = [

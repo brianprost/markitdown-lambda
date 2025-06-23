@@ -1,3 +1,5 @@
+import sys
+import os
 from pathlib import Path
 import re
 from io import BytesIO
@@ -5,12 +7,57 @@ import warnings
 import boto3
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from markitdown import MarkItDown
+from aws_lambda_powertools import Logger
+
+logger = Logger()
+
+# Configure environment variables before importing libraries that use ONNX
+os.environ.setdefault('ORT_LOGGING_LEVEL', '4')  # Suppress ONNX warnings
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+
+# Additional Lambda environment handling
+if 'AWS_LAMBDA_FUNCTION_NAME' in os.environ:
+    # Running in Lambda, suppress additional warnings and configure threading
+    os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+    os.environ.setdefault('NUMEXPR_MAX_THREADS', '1')
+
+# Import s3 module (safe to import early)
 from s3 import fetch_from_s3
 
 s3 = boto3.client("s3")
-app = FastAPI()
-md = MarkItDown()
+
+# Global variable for MarkItDown instance
+md = None
+md_initialized = False
+
+def get_markitdown():
+    """Lazy initialization of MarkItDown."""
+    global md, md_initialized
+    if not md_initialized:
+        try:
+            logger.info("Initializing MarkItDown...")
+            # Configure ONNX right before importing
+            try:
+                import onnxruntime as ort
+                ort.set_default_logger_severity(4)
+            except Exception as e:
+                logger.warning(f"Could not configure ONNX logging: {e}")
+            
+            # Import MarkItDown only when needed
+            from markitdown import MarkItDown
+            md = MarkItDown()
+            logger.info("MarkItDown initialized successfully")
+            md_initialized = True
+        except Exception as e:
+            logger.error(f"Failed to initialize MarkItDown: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            md = None
+            md_initialized = True  # Don't keep trying
+    return md
+
+app = FastAPI(title="MarkItDown Lambda", version="0.1.0")
 
 # Filter out deprecation warnings from botocore
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="botocore.*")
@@ -81,10 +128,34 @@ def validate_source(source: str) -> None:
         )
 
 
-@app.post("/", response_model=MarkItDownResponse)
+@app.get("/")
+async def root():
+    """Root endpoint for readiness checks."""
+    return {"status": "ready", "service": "markitdown-lambda"}
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    markitdown_instance = get_markitdown()
+    return {
+        "status": "healthy",
+        "markitdown_available": markitdown_instance is not None,
+        "python_version": sys.version
+    }
+
+@app.post("/events", response_model=MarkItDownResponse)
 async def convert_to_markdown(request: MarkItDownRequest) -> MarkItDownResponse:
     """Convert various file types to markdown format."""
+    markitdown_instance = get_markitdown()
+    if markitdown_instance is None:
+        raise HTTPException(
+            status_code=500,
+            detail="MarkItDown service is not available due to initialization failure"
+        )
+    
     validate_source(request.source)
+
+    logger.info(f"Using Python version {sys.version}")
 
     # Fetch content from S3 or local file
     if request.is_s3_uri():
@@ -106,7 +177,14 @@ async def convert_to_markdown(request: MarkItDownRequest) -> MarkItDownResponse:
         source_content = BytesIO(source_content)
 
     # Convert to markdown
-    result = md.convert(source_content)
+    try:
+        result = markitdown_instance.convert(source_content)
+    except Exception as e:
+        logger.error(f"Failed to convert content: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to convert content: {str(e)}"
+        )
 
     # Extract or generate title
     title = result.title or extract_title(

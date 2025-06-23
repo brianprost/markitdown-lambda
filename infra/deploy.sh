@@ -8,7 +8,8 @@ if [ -z "$GIT_HASH" ]; then
   exit 1
 fi
 IMAGE_NAME="markitdown-lambda"
-IMAGE_TAG="$IMAGE_NAME-$GIT_HASH"
+# IMAGE_TAG="$IMAGE_NAME-$GIT_HASH"
+IMAGE_TAG=$(date +%s)
 
 # get AWS Account ID
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)

@@ -1,14 +1,21 @@
 FROM public.ecr.aws/docker/library/python:3.13
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.0 /lambda-adapter /opt/extensions/lambda-adapter
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-ENV PORT=8000
+
 WORKDIR /var/task
 
-# Enable bytecode compilation
-ENV UV_COMPILE_BYTECODE=1
-
-# Copy from the cache instead of linking since it's a mounted volume
-ENV UV_LINK_MODE=copy
+# Set environment variables to handle Lambda constraints
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    ORT_LOGGING_LEVEL=4 \
+    ORT_DISABLE_ALL_LOGS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    OMP_NUM_THREADS=1 \
+    TOKENIZERS_PARALLELISM=false \
+    NUMEXPR_MAX_THREADS=1 \
+    PYTHONWARNINGS=ignore \
+    ONNX_DISABLE_EXCEPTIONS=1 \
+    ORT_DISABLE_PYTHON_PACKAGE_PATH_SEARCH=1
 
 # Install the project's dependencies using the lockfile and settings
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -25,9 +32,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Place executables in the environment at the front of the path
 ENV PATH="/var/task/.venv/bin:$PATH"
 
-EXPOSE $PORT
 
 # Reset the entrypoint, don't invoke `uv`
 ENTRYPOINT []
 
-CMD fastapi run --port=$PORT main.py
+CMD ["python", "lambda_handler.py"]
